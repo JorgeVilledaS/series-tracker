@@ -216,6 +216,8 @@ func handleCreatePost(conn net.Conn, request string, db *sql.DB) {
 	conn.Write([]byte(response))
 }
 
+// Maneja la solicitud POST para actualizar el episodio actual de una serie. Extrae el ID de la serie de la URL, incrementa el episodio actual en la base de datos (si no ha llegado al total) y responde con un mensaje simple.
+
 func handleUpdate(conn net.Conn, path string, db *sql.DB) {
 
 	parts := strings.SplitN(path, "?", 2)
