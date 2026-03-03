@@ -1,3 +1,5 @@
+Readme realizado con chatgpt
+
 ## 1. Validación en servidor (25 puntos)
 
 Se agregaron validaciones directamente en el backend para evitar datos inválidos o inconsistencias.
