@@ -1,7 +1,0 @@
-# binarios de go
-*.exe
-*.out
-*.test
-
-# archivos temporales
-.DS_Store
