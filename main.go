@@ -70,8 +70,22 @@ func handleClient(conn net.Conn, db *sql.DB) {
 	handleUpdate(conn, path, db)
 	return
 	}
-}
 
+	if method == "POST" && strings.HasPrefix(path, "/decrement") {
+		handleDecrement(conn, path, db)
+		return
+	}
+
+	if method == "DELETE" && strings.HasPrefix(path, "/delete") {
+	handleDelete(conn, path, db)
+	return
+	}
+
+	if method == "PUT" && strings.HasPrefix(path, "/edit") {
+	handleEdit(conn, request, path, db)
+	return
+	}
+}
 // Muestra el formulario para agregar una nueva serie. Es una página HTML simple con un formulario que envía los datos al servidor.
 
 func serveCreateForm(conn net.Conn) {
@@ -128,8 +142,31 @@ func serveHome(conn net.Conn, db *sql.DB) {
 		await fetch(url, { method: "POST" })
 		location.reload()
 	}
-	</script>
 
+	async function prevEpisode(id) {
+		await fetch("/decrement?id=" + id, { method: "POST" })
+		location.reload()
+	}
+
+	async function deleteSeries(id) {
+		await fetch("/delete?id=" + id, { method: "DELETE" })
+		location.reload()
+	}
+
+	async function editSeries(id) {
+		const newName = prompt("Nuevo nombre:")
+		if (!newName) return
+
+		await fetch("/edit?id=" + id, {
+			method: "PUT",
+			headers: { "Content-Type": "application/x-www-form-urlencoded" },
+			body: "name=" + encodeURIComponent(newName)
+		})
+
+		location.reload()
+	}
+
+	</script>
 	</head>
 	<body>
 
@@ -144,6 +181,7 @@ func serveHome(conn net.Conn, db *sql.DB) {
 	<th>Current</th>
 	<th>Total</th>
 	<th>Actions</th>
+	<th>Progreso</th>
 	</tr>
 	`
 
@@ -154,15 +192,42 @@ func serveHome(conn net.Conn, db *sql.DB) {
 		var total int
 
 		err := rows.Scan(&id, &name, &current, &total)
+		status := ""
+		if current == total {
+			status = " (COMPLETADA)"
+		}
+
+		percentage := (current * 100) / total
+
+		progressBar := fmt.Sprintf(`
+		<div style="width:100px;border:1px solid black;">
+			<div style="width:%d%%;background:green;color:white;text-align:center;">
+				%d%%
+			</div>
+		</div>`, percentage, percentage)
+
 		if err != nil {
 			log.Println(err)
 			continue
 		}
 
-		html += fmt.Sprintf(
-			"<tr><td>%d</td><td>%s</td><td>%d</td><td>%d</td><td><button onclick='nextEpisode(%d)'>+1</button></td></tr>",
-			id, name, current, total, id,
-		)
+	html += fmt.Sprintf(
+		"<tr>"+
+		"<td>%d</td>"+
+		"<td>%s%s</td>"+
+		"<td>%d</td>"+
+		"<td>%d</td>"+
+		"<td>%s</td>"+
+		"<td>"+
+		"<button onclick='prevEpisode(%d)'>-1</button> "+
+		"<button onclick='nextEpisode(%d)'>+1</button> "+
+		"<button onclick='deleteSeries(%d)'>Eliminar</button>"+
+		"</td>"+
+		"</tr>",
+		id, name, status, current, total,
+		progressBar,
+		id, id, id,
+	)
 	}
 
 	html += `
@@ -197,9 +262,20 @@ func handleCreatePost(conn net.Conn, request string, db *sql.DB) {
 
 	values, _ := url.ParseQuery(body)
 
-	name := values.Get("series_name")
-	current := values.Get("current_episode")
-	total := values.Get("total_episodes")
+	name := strings.TrimSpace(values.Get("series_name"))
+	currentStr := values.Get("current_episode")
+	totalStr := values.Get("total_episodes")
+
+	// Validación básica de los datos recibidos
+
+	current, err1 := strconv.Atoi(currentStr)
+	total, err2 := strconv.Atoi(totalStr)
+
+	if name == "" || err1 != nil || err2 != nil || total <= 0 || current < 0 || current > total {
+		response := "HTTP/1.1 400 Bad Request\r\n\r\nDatos inválidos"
+		conn.Write([]byte(response))
+		return
+	}
 
 	_, err := db.Exec(
 	"INSERT INTO series (name, current_episode, total_episodes) VALUES (?, ?, ?)",
@@ -240,5 +316,69 @@ func handleUpdate(conn net.Conn, path string, db *sql.DB) {
 	}
 
 	response := "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nok"
+	conn.Write([]byte(response))
+}
+
+// Maneja la solicitud POST para decrementar el episodio actual de una serie. Extrae el ID de la serie de la URL, decrementa el episodio actual en la base de datos (si no ha llegado a 0) y responde con un mensaje simple.	
+func handleDecrement(conn net.Conn, path string, db *sql.DB) {
+
+	parts := strings.SplitN(path, "?", 2)
+
+	var id string
+
+	if len(parts) > 1 {
+		params, _ := url.ParseQuery(parts[1])
+		id = params.Get("id")
+	}
+
+	db.Exec(`
+		UPDATE series
+		SET current_episode = current_episode - 1
+		WHERE id = ? AND current_episode > 0
+	`, id)
+
+	response := "HTTP/1.1 200 OK\r\n\r\nok"
+	conn.Write([]byte(response))
+}
+
+func handleDelete(conn net.Conn, path string, db *sql.DB) {
+
+	parts := strings.SplitN(path, "?", 2)
+
+	var id string
+
+	if len(parts) > 1 {
+		params, _ := url.ParseQuery(parts[1])
+		id = params.Get("id")
+	}
+
+	db.Exec("DELETE FROM series WHERE id = ?", id)
+
+	response := "HTTP/1.1 200 OK\r\n\r\nok"
+	conn.Write([]byte(response))
+}
+
+func handleEdit(conn net.Conn, request string, path string, db *sql.DB) {
+
+	parts := strings.SplitN(path, "?", 2)
+
+	var id string
+	if len(parts) > 1 {
+		params, _ := url.ParseQuery(parts[1])
+		id = params.Get("id")
+	}
+
+	bodyParts := strings.SplitN(request, "\r\n\r\n", 2)
+	if len(bodyParts) < 2 {
+		return
+	}
+
+	values, _ := url.ParseQuery(bodyParts[1])
+
+	name := values.Get("name")
+
+	db.Exec("UPDATE series SET name = ? WHERE id = ?", name, id)
+
+	response := "HTTP/1.1 200 OK\r\n\r\nok"
 	conn.Write([]byte(response))
 }
